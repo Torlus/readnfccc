@@ -25,7 +25,7 @@ $ gcc readnfccc.c -lnfc -o readnfccc
 #include <nfc/nfc.h>
 
 // Choose whether to mask the PAN or not
-#define MASKED 1
+#define MASKED 0 
 
 #define MAX_FRAME_LEN 300
 
@@ -81,6 +81,13 @@ void parseCard(uint8_t *buf, int len) {
 	cc = 1;
 }
 
+void parseDate(uint8_t *buf) {
+	year[0] = '0' + ((buf[0] >> 4) & 0x0f);
+	year[1] = '0' + ((buf[0] >> 0) & 0x0f);
+	month[0] = '0' + ((buf[1] >> 4) & 0x0f);
+	month[1] = '0' + ((buf[1] >> 0) & 0x0f);
+}
+
 void dumpTLV(int level, uint8_t *buf, int len, int tlen) {
 	int n = 0;
 	int t = 0;
@@ -93,7 +100,7 @@ void dumpTLV(int level, uint8_t *buf, int len, int tlen) {
 		if (n == 0) {
 			pp = p;
 			for(i = 0; i < level; i++)
-				printf("  ");
+				printf("-} ");
 			t = 0;
 		} 
 		if (n < tlen) {
@@ -104,6 +111,11 @@ void dumpTLV(int level, uint8_t *buf, int len, int tlen) {
 			p++;
 		} else if (n == tlen) {
 			l = *p;
+			if (l == 0x81) { // ISO7816 - 5.2.2.2 - BER-TLV length fields
+				p++;
+				l = *p;
+				pp++;
+			}
 			printf(" L=%02x (%3d): ", *p, l);
 			if (l == 0) {
 				n = 0;
@@ -125,8 +137,11 @@ void dumpTLV(int level, uint8_t *buf, int len, int tlen) {
 				printf("[%s]\n", ascii);
 				n = -1;				
 
-				if (t == 0x57)
+				if (t == 0x57 || t == 0x5a)
 					parseCard(pp + 2, l);
+
+				if (t == 0x5f24)
+					parseDate(pp + 3); 
 
 				if (t == 0x6f || t == 0xa5 || t == 0x70)
 					dumpTLV(level + 1, pp + tlen + 1, l, 1);
@@ -166,7 +181,7 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
   const char *acLibnfcVersion = nfc_version();
-  //printf("Using libnfc %s\n", acLibnfcVersion);
+  printf("Using libnfc %s\n", acLibnfcVersion);
   pnd = nfc_open(context, NULL);
   if (pnd == NULL) {
     printf("Error opening NFC reader");
@@ -184,7 +199,7 @@ int main(int argc, char **argv)
 
   int result;
   const nfc_modulation nm = {
-    .nmt = NMT_ISO14443A,
+    .nmt = NMT_ISO14443B,
     .nbr = NBR_106,
   };
   if (nfc_initiator_select_passive_target(pnd, nm, NULL, 0, &nt) <= 0) {
@@ -280,11 +295,14 @@ int main(int argc, char **argv)
   }
 
   if (cc) {
- 		printf("======================================================\n");
+	printf("======================================================\n");
+
+#if MASKED
   	for(i = 6; i < strlen(card) - 4; i++)
-  		card[i] = 'X';
-  	printf("[%s] 20%c%c/%c%c\n", card, year[0], year[1], month[0], month[1]);
-  	 printf("======================================================\n");
+		card[i] = 'X';
+#endif
+	printf("[%s] 20%c%c/%c%c\n", card, year[0], year[1], month[0], month[1]);
+	printf("======================================================\n");
   }
 
   nfc_close(pnd);
